@@ -52,9 +52,11 @@ find_file(HALIDE_LIB_PATH NAMES libHalide.so Halide.dll PATHS ${HALIDE_DIR}/Rele
 set(HALIDE_LIB_PATH ../../../Halide/bin/libHalide.so)
 #message(FATAL_ERROR "not-found ${HALIDE_LIB_PATH} ")
 set(SHELL_CMD )
-if(CMAKE_HOST_WIN32 AND ${HALIDE_LIB_PATH} MATCHES ".+\.so$")
+if(CMAKE_HOST_WIN32 AND ${HALIDE_LIB_PATH} MATCHES ".+\\.so$")
 	set(WINDOWS_LINUX_SUBSYS ON)
-	set(SHELL_CMD "%WINDIR%/System32/bash")
+    set(SHELL_CMD $ENV{WINDIR}/System32/bash.exe)
+	#find_program(SHELL_CMD bash) # conflicts with Git/usr/bin/bash.exe
+	message(STATUS "Using bash ${SHELL_CMD}")
 endif()
 	
 if (NOT CMAKE_HOST_WIN32 OR WINDOWS_LINUX_SUBSYS)
@@ -136,9 +138,10 @@ set(hlExtraEmit ,schedule)
 # only include the runtime once (fix for windows)
 set(hlTarget ${hlTarget}-no_runtime)
 
+set(HLPIPES_ROOT ${CMAKE_SOURCE_DIR}/${HLPIPES_ROOT})
 
 # source-tree paths
-get_filename_component(hlGeneratorSourcesDir ${CMAKE_CURRENT_LIST_DIR} ABSOLUTE)
+get_filename_component(hlGeneratorSourcesDir ${HLPIPES_ROOT} ABSOLUTE)
 set(hlHeaderExportDir ${hlGeneratorSourcesDir}/h)
 
 
@@ -148,6 +151,7 @@ set(hlGenDir ${hlBinDir}/gen)
 set(hlGenToolCppRel gen/tool.cpp)
 set(hlGenToolCpp ${hlGenDir}/tool.cpp)
 set(hlTargetDir ${hlBinDir}/${hlTarget}${hlTargetDirSuffix}) # hlTarget must be a child of hlBinDir!
+
 
 # generate/copy/download required files
 file(COPY ${HALIDE_LIB_PATH} DESTINATION ${hlBinDir})
@@ -166,9 +170,9 @@ set(hlPipelineLibs "")
 set(hlPipelineHeaders "")
 
 
-file(GLOB hlGeneratorSources *_generator.cpp)
-file(GLOB hlPipelineMiscSources *.cpp)
-file(GLOB hlPipelineMiscHeaders *.h)
+file(GLOB hlGeneratorSources ${HLPIPES_ROOT}/*_generator.cpp)
+file(GLOB hlPipelineMiscSources ${HLPIPES_ROOT}/*.cpp)
+file(GLOB hlPipelineMiscHeaders ${HLPIPES_ROOT}/*.h)
 
 function(generator_tag output input)
     get_filename_component(tag ${input} NAME_WE)
@@ -262,13 +266,15 @@ endif ()
 
 if(WINDOWS_LINUX_SUBSYS)
 	message(STATUS "Using Linux subsystem")
-	set(cmdGenFuncHeader ${SHELL_CMD} ${cmdGenFuncHeader})
-	set(cmdGenFuncLib ${SHELL_CMD} ${cmdGenFuncLib})
-	set(cmdGenGen ${SHELL_CMD} ${cmdGenGen})
+	set(cmdGenFuncHeader "${SHELL_CMD} ${cmdGenFuncHeader}")
+	set(cmdGenFuncLib "${SHELL_CMD} ${cmdGenFuncLib}")
+	set(cmdGenGen "${SHELL_CMD} ${cmdGenGen}")
 endif()
 
 
-file(STRINGS Functions.txt hlFunctions)
+
+
+file(STRINGS ${HLPIPES_ROOT}/Functions.txt hlFunctions)
 foreach (funcDesc IN LISTS hlFunctions)
     if (NOT ${funcDesc} STREQUAL "")
         string(REGEX MATCH "^[\t ]*([a-zA-Z0-9_]+)[\t ]+([a-zA-Z0-9_]+)[\t ]*(.*)" funcDesc2 ${funcDesc})
@@ -283,6 +289,10 @@ foreach (funcDesc IN LISTS hlFunctions)
     endif ()
 endforeach ()
 
+if("${hlGeneratorSources}" STREQUAL "")
+	message(FATAL_ERROR "No *._generator.cpp in ${HLPIPES_ROOT}")
+endif()
+
 
 foreach (source IN LISTS hlGeneratorSources)
     generator_tag(tag ${source})
@@ -291,7 +301,7 @@ foreach (source IN LISTS hlGeneratorSources)
 
     # find header deps
     execute_process(
-            COMMAND ${clangCompiler} -M ${source} -I${HALIDE_DIR}/include
+            COMMAND ${clangCompiler} -std=c++11 -M ${source} -I${HALIDE_DIR}/include
             WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
             OUTPUT_VARIABLE sourceDeps
     )
@@ -308,10 +318,10 @@ foreach (source IN LISTS hlGeneratorSources)
     #message(FATAL_ERROR ${genBin})
     add_custom_command(
             OUTPUT ${genBin}
-            COMMAND ${cmdGenGen} ARGS ${tag}
+            COMMAND ${cmdGenGen} ${tag}
             DEPENDS ${source} "${sourceDeps}" ${hlPipelineMiscSources}
             WORKING_DIRECTORY "${hlBinDir}"
-            COMMENT "generating ${tag} generator"
+            COMMENT "generating ${tag} generator '${cmdGenGen} ${tag}' in ${hlBinDir}"
     )
 
     set(objNoFuncDesc "1")
@@ -352,7 +362,7 @@ foreach (source IN LISTS hlGeneratorSources)
                         TARGET hl_pipelines_headers PRE_BUILD
                         COMMAND ${cmdGenFuncHeader} ARGS ${tag} ${CMAKE_MATCH_1} \"${genParams}\" ${genTargetFeatures}
                         WORKING_DIRECTORY "${hlBinDir}"
-                        #COMMENT "running ${tag}->${CMAKE_MATCH_1}(${genParams}) Header generator"
+                        COMMENT "${tag}->${CMAKE_MATCH_1}(${genParams}) Header generator"
                 )
 
                 message(STATUS "Registered Halide Function generator ${tag}->${CMAKE_MATCH_1}")
@@ -385,9 +395,9 @@ foreach (source IN LISTS hlGeneratorSources)
 
         add_custom_command(
                 TARGET hl_pipelines_headers PRE_BUILD
-                COMMAND ${cmdGenFuncHeader} ARGS ${tag} ${tag} \"\" \"\"
+                COMMAND ${cmdGenFuncHeader} ${tag} ${tag} \"\" \"\"
                 WORKING_DIRECTORY "${hlBinDir}"
-                #COMMENT "running ${tag} Header generator"
+                COMMENT "${tag} Header generator ${cmdGenFuncHeader} ${tag} ${tag} \"\" \"\" in ${hlBinDir}"
         )
 
         message(STATUS "Registered Halide generator ${tag}")
@@ -431,10 +441,11 @@ add_dependencies(hl_pipelines hl_pipelines_headers)
 
 
 # show the pipeline sources in the IDE (nothing should link against this)
-add_library(hl_pipeline_sources SHARED EXCLUDE_FROM_ALL ${hlPipelineMiscSources} ${hlPipelineMiscHeaders} Functions.txt)
+add_library(hl_pipeline_sources SHARED EXCLUDE_FROM_ALL ${hlPipelineMiscSources} ${hlPipelineMiscHeaders} ${HLPIPES_ROOT}/Functions.txt)
+set_target_properties(hl_pipeline_sources PROPERTIES LINKER_LANGUAGE CXX)
 set_source_files_properties(${hlGeneratorSources} PROPERTIES HEADER_FILE_ONLY TRUE)
 set_source_files_properties(${hlPipelineMiscSources} PROPERTIES HEADER_FILE_ONLY TRUE)
-set_source_files_properties(Functions.txt PROPERTIES HEADER_FILE_ONLY TRUE)
+set_source_files_properties(${HLPIPES_ROOT}/Functions.txt PROPERTIES HEADER_FILE_ONLY TRUE)
 source_group(generators FILES ${hlGeneratorSources})
 source_group(misc_headers FILES ${hlPipelineMiscHeaders})
 include_directories(${HALIDE_DIR}/include)
