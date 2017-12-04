@@ -48,12 +48,19 @@ if (NOT clangCompiler)
 endif ()
 
 
-find_file(HALIDE_LIB_PATH NAMES libHalide.so Halide.dll PATHS ${HALIDE_DIR}/Release ${HALIDE_DIR}/bin ${HALIDE_DIR}/lib ${HALIDE_DIR}/lib/Release ../../../Halide/bin)
-set(HALIDE_LIB_PATH ../../../Halide/bin/libHalide.so)
-#message(FATAL_ERROR "not-found ${HALIDE_LIB_PATH} ")
+find_file(hlLibDll NAMES Halide.dll libHalide.so PATHS ${HALIDE_DIR}/bin/Release ${HALIDE_DIR}/Release ${HALIDE_DIR}/bin ${HALIDE_DIR}/lib ${HALIDE_DIR}/lib/Release ../../../Halide/bin)
+find_file(hlLib NAMES Halide.lib libHalide.so PATHS    ${HALIDE_DIR}/lib/Release ${HALIDE_DIR}/Release ${HALIDE_DIR}/bin ${HALIDE_DIR}/lib ${HALIDE_DIR}/lib/Release ../../../Halide/lib)
+
+if(NOT hlLibDll)
+    message(STATUS "libHalide.so, Halide.dll not found in ${HALIDE_DIR} , trying other locations")
+    set(hlLibDll ../../../Halide/lib/libHalide.a)
+endif()
+
+#message(FATAL_ERROR "not-found ${hlLib} ")
 set(SHELL_CMD )
-if(CMAKE_HOST_WIN32 AND ${HALIDE_LIB_PATH} MATCHES ".+\\.so$")
+if(CMAKE_HOST_WIN32 AND ${hlLibDll} MATCHES ".+\\.so$")
 	set(WINDOWS_LINUX_SUBSYS ON)
+    message(STATUS "Using Linux subsystem (found ${hlLibDll})")
     set(SHELL_CMD $ENV{WINDIR}/System32/bash.exe)
 	#find_program(SHELL_CMD bash) # conflicts with Git/usr/bin/bash.exe
 	message(STATUS "Using bash ${SHELL_CMD}")
@@ -64,7 +71,6 @@ if (NOT CMAKE_HOST_WIN32 OR WINDOWS_LINUX_SUBSYS)
     set(hlLib -lHalide)
 else ()
     set(clangCompilerFlags "-g -std=c++14 -Wno-inconsistent-dllimport -Wl,/ignore:4217,/ignore:4049,/STACK:999999999")
-    set(hlLib "${HALIDE_DIR}/Release/Halide.lib")
 endif ()
 
 
@@ -154,7 +160,7 @@ set(hlTargetDir ${hlBinDir}/${hlTarget}${hlTargetDirSuffix}) # hlTarget must be 
 
 
 # generate/copy/download required files
-file(COPY ${HALIDE_LIB_PATH} DESTINATION ${hlBinDir})
+file(COPY ${hlLibDll} DESTINATION ${hlBinDir})
 file(MAKE_DIRECTORY ${hlGenDir})
 # TODO add sha256 file check
 file(DOWNLOAD https://gist.githubusercontent.com/f4bsch/cbf5710c97974e97b2147619f7be2f08/raw/75be2518e2a374485f3ae08602be20034d730fb9/HalideGenGen ${hlGenToolCpp})
@@ -223,10 +229,10 @@ if not exist \"${hlHeaderExportDir}/%func%.h\" (
             "@echo off
 set gen=%1\n set func=%2\n set genArgs=%3\n set feat=%4\n
 (
-	echo generating %func% for target '${hlTarget}' with args '%genArgs:\"=%'
+	echo generating %func% for target '${hlTarget}%feat:\"=%' with args '%genArgs:\"=%'
 REM	${compileGen}
 	REM if exist ${hlTarget}${hlTargetDirSuffix}/%func%.lib del ${hlTarget}${hlTargetDirSuffix}/%func%.lib
-	\"%gen%_gen.exe\" -g %gen% -f %func% -o ${hlTarget}${hlTargetDirSuffix} -e h,static_library,cpp,html${hlExtraEmit} target=${hlTarget}%feat% %genArgs:\"=% ${hlAutoSchedule} || (echo \"generator failed (%errorlevel%)\" 1>&2 && exit 1)
+	\"%gen%_gen.exe\" -g %gen% -f %func% -o ${hlTarget}${hlTargetDirSuffix} -e h,static_library,cpp,html${hlExtraEmit} %genArgs:\"=% target=${hlTarget}%feat:\"=% ${hlAutoSchedule} || (echo \"generator failed (%errorlevel%)\" 1>&2 && exit 1)
 	\"${CMAKE_COMMAND}\" -E copy_if_different \"${hlTarget}${hlTargetDirSuffix}/%func%.h\" \"${hlHeaderExportDir}\"
 )
 ")
@@ -265,7 +271,6 @@ else()
 endif ()
 
 if(WINDOWS_LINUX_SUBSYS)
-	message(STATUS "Using Linux subsystem")
 	set(cmdGenFuncHeader "${SHELL_CMD} ${cmdGenFuncHeader}")
 	set(cmdGenFuncLib "${SHELL_CMD} ${cmdGenFuncLib}")
 	set(cmdGenGen "${SHELL_CMD} ${cmdGenGen}")
@@ -387,7 +392,7 @@ foreach (source IN LISTS hlGeneratorSources)
 
         add_custom_command(
                 OUTPUT ${objLib} ${objHeader} # the header creates the dep!
-                COMMAND ${cmdGenFuncLib} ARGS ${tag} ${tag} \"\"
+                COMMAND ${cmdGenFuncLib} ARGS ${tag} ${tag} \"\" \"\"
                 DEPENDS ${genBin} ${sourceDeps} ${hlPipelineMiscSources} # ${source}  #${hlGenToolCpp}
                 WORKING_DIRECTORY "${hlBinDir}"
                 COMMENT "running ${tag} generator"
@@ -424,9 +429,10 @@ translate_paths(hlBinDirT "${hlBinDir}")
 add_custom_command(
         OUTPUT ${hlRtLib} ${hlRtHeader}
         COMMAND ${cmdGenFuncLib} ARGS ${tag} ${tag} \"-r hlrt\" \"-opengl-profile-debug\"
+        COMMAND echo "//dep-dummy" > ${hlRtHeader}
         DEPENDS ${objLib}
         WORKING_DIRECTORY "${hlBinDir}"
-        COMMENT "running Halide runtime generator (with ${objBin})"
+        COMMENT "running Halide runtime generator (with ${tag}) ${hlRtLib}"
 )
 
 
