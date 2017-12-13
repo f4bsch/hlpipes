@@ -53,7 +53,9 @@ find_file(hlLib NAMES Halide.lib libHalide.so PATHS    ${HALIDE_DIR}/lib/Release
 
 if(NOT hlLibDll)
     message(STATUS "libHalide.so, Halide.dll not found in ${HALIDE_DIR} , trying other locations")
-    set(hlLibDll ../../../Halide/lib/libHalide.a)
+    #set(hlLibDll ../../../Halide/lib/libHalide.a)
+    set(hlLib ${HALIDE_DIR}/lib/Release/Halide.lib)
+    set(hlLibDll ${HALIDE_DIR}/bin/Release/Halide.dll)
 endif()
 
 #message(FATAL_ERROR "not-found ${hlLib} ")
@@ -68,7 +70,6 @@ endif()
 	
 if (NOT CMAKE_HOST_WIN32 OR WINDOWS_LINUX_SUBSYS)
     set(clangCompilerFlags "-g -std=c++11 -lpthread -ltinfo -ldl -lz -fno-rtti")
-    set(hlLib -lHalide)
 else ()
     set(clangCompilerFlags "-g -std=c++14 -Wno-inconsistent-dllimport -Wl,/ignore:4217,/ignore:4049,/STACK:999999999")
 endif ()
@@ -144,7 +145,9 @@ set(hlExtraEmit ,schedule)
 # only include the runtime once (fix for windows)
 set(hlTarget ${hlTarget}-no_runtime)
 
-set(HLPIPES_ROOT ${CMAKE_SOURCE_DIR}/${HLPIPES_ROOT})
+if(NOT IS_ABSOLUTE HLPIPES_ROOT)
+    #set(HLPIPES_ROOT ${CMAKE_SOURCE_DIR}/${HLPIPES_ROOT})
+endif()
 
 # source-tree paths
 get_filename_component(hlGeneratorSourcesDir ${HLPIPES_ROOT} ABSOLUTE)
@@ -161,6 +164,8 @@ set(hlTargetDir ${hlBinDir}/${hlTarget}${hlTargetDirSuffix}) # hlTarget must be 
 
 # generate/copy/download required files
 file(COPY ${hlLibDll} DESTINATION ${hlBinDir})
+get_filename_component(hlLibDllName ${hlLibDll} NAME)
+#add_custom_command(OUTPUT "${hlBinDir}/${hlLibDllName}" DEPENDS "${hlLibDll}" COMMAND ${CMAKE_COMMAND} -E copy "${hlLibDll}" "${hlBinDir}/${hlLibDllName}" COMMENT "copying ${hlLibDllName}" )
 file(MAKE_DIRECTORY ${hlGenDir})
 # TODO add sha256 file check
 file(DOWNLOAD https://gist.githubusercontent.com/f4bsch/cbf5710c97974e97b2147619f7be2f08/raw/75be2518e2a374485f3ae08602be20034d730fb9/HalideGenGen ${hlGenToolCpp})
@@ -208,7 +213,7 @@ endforeach ()
 set(cmakeCmd ${CMAKE_COMMAND})
 
 string(REPLACE ";" "\t" hlPipelineMiscSourcesJoin "${hlPipelineMiscSources}")
-set(hlGenCommonCompilerArgs "${hlPipelineMiscSourcesJoin} ${hlGenToolCppRel} ${hlLib} ${clangCompilerFlags} -I${HALIDE_DIR}/include -L${HALIDE_DIR}/lib")
+set(hlGenCommonCompilerArgs "${hlPipelineMiscSourcesJoin} ${hlGenToolCppRel} -l${hlLib} ${clangCompilerFlags} -I${HALIDE_DIR}/include -L${HALIDE_DIR}/lib")
 
 if (CMAKE_HOST_WIN32 AND NOT WINDOWS_LINUX_SUBSYS)
     set(compileGen "\"${clangCompiler}\" ${hlGeneratorSourcesDir}/%gen%_generator.cpp ${hlGenCommonCompilerArgs} -o %gen%_gen.exe")
@@ -357,7 +362,7 @@ foreach (source IN LISTS hlGeneratorSources)
 
                 add_custom_command(
                         OUTPUT ${funcLib} ${funcHeader} # the header creates the dep!
-                        COMMAND ${cmdGenFuncLib} ARGS ${tag} ${CMAKE_MATCH_1} \"${genParams}\" ${genTargetFeatures}
+                        COMMAND ${cmdGenFuncLib} ${tag} ${CMAKE_MATCH_1} \"${genParams}\" \"${genTargetFeatures}\"
                         DEPENDS ${hlBinDir}/${CMAKE_MATCH_1}.defdep ${genBin} ${sourceDeps} ${hlPipelineMiscSources} # ${source}   #${hlGenToolCpp}
                         WORKING_DIRECTORY "${hlBinDir}"
                         COMMENT "running ${tag}->${CMAKE_MATCH_1}(${genParams}) Function generator"
@@ -365,9 +370,9 @@ foreach (source IN LISTS hlGeneratorSources)
 
                 add_custom_command(
                         TARGET hl_pipelines_headers PRE_BUILD
-                        COMMAND ${cmdGenFuncHeader} ARGS ${tag} ${CMAKE_MATCH_1} \"${genParams}\" ${genTargetFeatures}
+                        COMMAND ${cmdGenFuncHeader} ${tag} ${CMAKE_MATCH_1} \"${genParams}\" \"${genTargetFeatures}\"
                         WORKING_DIRECTORY "${hlBinDir}"
-                        COMMENT "${tag}->${CMAKE_MATCH_1}(${genParams}) Header generator"
+                        #COMMENT "${tag}->${CMAKE_MATCH_1}(${genParams}) Header generator"
                 )
 
                 message(STATUS "Registered Halide Function generator ${tag}->${CMAKE_MATCH_1}")
@@ -402,7 +407,7 @@ foreach (source IN LISTS hlGeneratorSources)
                 TARGET hl_pipelines_headers PRE_BUILD
                 COMMAND ${cmdGenFuncHeader} ${tag} ${tag} \"\" \"\"
                 WORKING_DIRECTORY "${hlBinDir}"
-                COMMENT "${tag} Header generator ${cmdGenFuncHeader} ${tag} ${tag} \"\" \"\" in ${hlBinDir}"
+                #COMMENT "${tag} Header generator ${cmdGenFuncHeader} ${tag} ${tag} \"\" \"\" in ${hlBinDir}"
         )
 
         message(STATUS "Registered Halide generator ${tag}")
@@ -418,19 +423,11 @@ set(hlRtHeader ${hlTargetDir}/hlrt.h)
 list(APPEND hlPipelineLibs ${hlRtLib})
 list(APPEND hlPipelineHeaders ${hlRtHeader})
 translate_paths(hlBinDirT "${hlBinDir}")
-#add_custom_command(
-#        OUTPUT ${hlRtLib} ${hlRtHeader}
-#        COMMAND ${SHELL_CMD} ${SHELL_BIN_PROXY} ${hlBinDirT}/${tag}_gen -r hlrt -o ${hlTarget}${hlTargetDirSuffix} target=${hlTarget}-opengl-debug && echo "//dep-dummy" > ${hlRtHeader}
-#        DEPENDS ${objLib} # ${objLib} will make the generator to compile before #${hlGenToolCpp}
-#        WORKING_DIRECTORY "${hlBinDir}"
-#        COMMENT "running Halide runtime generator (with ${objBin})"
-#)
-
 add_custom_command(
         OUTPUT ${hlRtLib} ${hlRtHeader}
         COMMAND ${cmdGenFuncLib} ARGS ${tag} ${tag} \"-r hlrt\" \"-opengl-profile-debug\"
         COMMAND echo "//dep-dummy" > ${hlRtHeader}
-        DEPENDS ${objLib}
+        DEPENDS ${genBin} ${hlLib} ${hlLibDll} "${hlBinDir}/${hlLibDllName}"
         WORKING_DIRECTORY "${hlBinDir}"
         COMMENT "running Halide runtime generator (with ${tag}) ${hlRtLib}"
 )
